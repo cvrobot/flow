@@ -45,13 +45,15 @@
 #include "stm32f4xx_rcc.h"
 #include "stm32f4xx_tim.h"
 #include "stm32f4xx_dma.h"
+#include "stm32f4xx_exti.h"
+#include "stm32f4xx_syscfg.h"
 #include "misc.h"
 #include "utils.h"
 #include "usart.h"
 #include "settings.h"
 #include "sonar.h"
 #include "sonar_mode_filter.h"
-
+#include "led.h"
 #define SONAR_SCALE	1000.0f
 #define SONAR_MIN	0.12f		/** 0.12m sonar minimum distance */
 #define SONAR_MAX	3.5f		/** 3.50m sonar maximum distance */
@@ -69,6 +71,9 @@ static volatile int data_counter = 0;
 static volatile int data_valid = 0;
 static volatile int new_value = 0;
 
+static volatile uint32_t data_start = 0;
+static volatile int data_delt = 0;
+static volatile float data_float = 0.0f;
 static volatile uint32_t sonar_measure_time_interrupt = 0;
 static volatile uint32_t sonar_measure_time = 0;
 
@@ -90,6 +95,50 @@ bool sonar_valid = false;				/**< the mode of all sonar measurements */
   */
 void sonar_trigger(){
 	GPIO_SetBits(GPIOE, GPIO_Pin_8);
+}
+
+void sonar_trigger_run(){
+	GPIO_ResetBits(GPIOE, GPIO_Pin_8);
+//	data_start = get_boot_time_us();
+}
+/**
+  * @brief  This function handles EXT15_10 interrupts.
+  * @param  None
+  * @retval None
+  */
+void EXTI15_10_IRQHandler(void)
+{
+	if(EXTI_GetITStatus(EXTI_Line13) != RESET)
+	{
+		if(1 ==GPIO_ReadInputDataBit(GPIOD,GPIO_Pin_13)) //get start
+		{
+			data_start = get_boot_time_us();
+		}
+		else
+		{
+			data_delt = (int)(get_boot_time_us() - data_start);
+			int temp = data_delt * 17 /100;//int temp = data_delt * 340 *1000/10^6/2;//x mm
+			//data_float = (float)data_delt;
+			data_float = (float)temp/SONAR_SCALE;
+			if ((temp > SONAR_MIN*SONAR_SCALE) && (temp < SONAR_MAX*SONAR_SCALE))
+			{
+				/* it is in normal sensor range, take it */
+				last_measure_time = measure_time;
+				measure_time = get_boot_time_us();
+				sonar_measure_time_interrupt = measure_time;
+				dt = ((float)(measure_time - last_measure_time)) / 1000000.0f;
+				LEDToggle(LED_ERR);
+				valid_data = temp;
+				sonar_mode = insert_sonar_value_and_get_mode_value(valid_data / SONAR_SCALE);
+				new_value = 1;
+				sonar_valid = true;
+			} else {
+				sonar_valid = false;
+			}
+		}
+	/* Clear the EXTI line 9 pending bit */
+	EXTI_ClearITPendingBit(EXTI_Line13);
+	}
 }
 
 /**
@@ -211,6 +260,23 @@ void sonar_config(void)
 	GPIO_InitTypeDef GPIO_InitStructure;
 
 	/* Enable GPIO clocks */
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOD, ENABLE);
+
+	/* Configure pd13  pin for  */
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_13;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
+	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
+	GPIO_Init(GPIOD, &GPIO_InitStructure);
+	SYSCFG_EXTILineConfig(EXTI_PortSourceGPIOD,EXTI_PinSource13);
+
+	EXTI_InitTypeDef EXTI_InitStructure;
+	EXTI_InitStructure.EXTI_Line = EXTI_Line13;
+	EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;
+	EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising_Falling;
+	EXTI_InitStructure.EXTI_LineCmd = ENABLE;
+	EXTI_Init(&EXTI_InitStructure);
+	EXTI_GenerateSWInterrupt(EXTI_Line13);
+	/* Enable GPIO clocks */
 	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOE, ENABLE);
 
 	/* Configure l3gd20 CS pin in output pushpull mode */
@@ -223,6 +289,13 @@ void sonar_config(void)
 
 	/* Configures the nested vectored interrupt controller. */
 	NVIC_InitTypeDef NVIC_InitStructure;
+
+	/* Enable the EXT13 (PD13) Interrupt */
+	NVIC_InitStructure.NVIC_IRQChannel = EXTI15_10_IRQn;
+	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+	NVIC_Init(&NVIC_InitStructure);
 
 	/* Enable the USARTx Interrupt */
 	NVIC_InitStructure.NVIC_IRQChannel = UART4_IRQn;

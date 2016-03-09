@@ -161,7 +161,10 @@ void timer_update_ms(void)
 		sonar_trigger();
 		timer[TIMER_SONAR] = SONAR_TIMER_COUNT;
 	}
-
+	if (timer[TIMER_SONAR] == (SONAR_TIMER_COUNT-1))
+	{
+		sonar_trigger_run();
+	}
 	if (timer[TIMER_SYSTEM_STATE] == 0)
 	{
 		send_system_state_now = true;

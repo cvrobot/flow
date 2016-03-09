@@ -46,13 +46,18 @@ void sonar_config(void);
 /**
   * @brief  Sonar interrupt handler
   */
+void EXTI15_10_IRQHandler(void);
+
+/**
+  * @brief  Sonar interrupt handler
+  */
 void UART4_IRQHandler(void);
 
 /**
   * @brief  Triggers the sonar to measure the next value
   */
 void sonar_trigger(void);
-
+void sonar_trigger_run(void);
 /**
   * @brief  Read out newest sonar data
   *
